@@ -1,3 +1,69 @@
+import os
+import json
+import httpx
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+app = FastAPI()
+
+# Leemos la Key de Render, o usamos la tuya por defecto
+API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyD1HvE82bj0yDanUgKAGy3pbr2hKZACv6A")
+MODELO_ACTIVO = "models/gemini-1.5-flash-latest"
+
+# --- MEMORIA ---
+FICHERO_MEMORIA = "memoria_tutor.json"
+
+def cargar_memoria():
+    if os.path.exists(FICHERO_MEMORIA):
+        try:
+            with open(FICHERO_MEMORIA, "r", encoding="utf-8") as f: return json.load(f)
+        except: pass
+    return {}
+
+def guardar_memoria(data):
+    try:
+        with open(FICHERO_MEMORIA, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+    except: pass
+
+memoria_global = cargar_memoria()
+
+class Peticion(BaseModel):
+    usuario_id: str
+    intento_usuario: str
+
+@app.post("/procesar_intento")
+async def procesar(peticion: Peticion):
+    uid = peticion.usuario_id
+    url = f"https://generativelanguage.googleapis.com/v1beta/{MODELO_ACTIVO}:generateContent?key={API_KEY}"
+    
+    prompt = {
+        "contents": [{
+            "parts": [{"text": f"Eres un tutor de inglés experto. Corrige de forma breve y natural, sin usar asteriscos ni lenguaje robótico: {peticion.intento_usuario}"}]
+        }]
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.post(url, json=prompt, timeout=15.0)
+            if r.status_code != 200:
+                return {"feedback": "Error de conexión con el cerebro de la IA."}
+            
+            data = r.json()
+            respuesta_texto = data['candidates'][0]['content']['parts'][0]['text'].replace("*", "").strip()
+
+            if uid not in memoria_global: memoria_global[uid] = {"puntos": 0, "historial": []}
+            memoria_global[uid]["puntos"] += 1
+            memoria_global[uid]["historial"].append(peticion.intento_usuario)
+            guardar_memoria(memoria_global)
+
+            return {
+                "feedback": respuesta_texto,
+                "sesiones": memoria_global[uid]["puntos"]
+            }
+        except Exception as e:
+            return {"feedback": "Error del servidor de voz.", "sesiones": 0}
+
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return """
@@ -26,7 +92,7 @@ async def home():
                 justify-content: center; 
                 height: 100vh; 
                 margin: 0;
-                overflow: hidden; /* Evita scrolls raros en el móvil */
+                overflow: hidden;
             }
             .container { width: 90%; max-width: 400px; text-align: center; }
             .mic-btn { 
@@ -80,24 +146,27 @@ async def home():
                 const text = e.results[0][0].transcript;
                 status.innerText = "PENSANDO...";
                 
-                const r = await fetch('/procesar_intento', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({usuario_id: "creus", intento_usuario: text})
-                });
-                const d = await r.json();
-                
-                iaFeedback.innerText = d.feedback;
-                resCard.style.display = 'block';
-                status.innerText = "LISTO";
+                try {
+                    const r = await fetch('/procesar_intento', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({usuario_id: "creus", intento_usuario: text})
+                    });
+                    const d = await r.json();
+                    
+                    iaFeedback.innerText = d.feedback;
+                    resCard.style.display = 'block';
+                    status.innerText = "LISTO";
 
-                const utterance = new SpeechSynthesisUtterance(d.feedback);
-                const voices = window.speechSynthesis.getVoices();
-                utterance.voice = voices.find(v => v.lang.includes('es') && v.name.includes('Google')) || voices[0];
-                utterance.rate = 0.95;
-                window.speechSynthesis.speak(utterance);
+                    const utterance = new SpeechSynthesisUtterance(d.feedback);
+                    const voices = window.speechSynthesis.getVoices();
+                    utterance.voice = voices.find(v => v.lang.includes('es') && v.name.includes('Google')) || voices[0];
+                    utterance.rate = 0.95;
+                    window.speechSynthesis.speak(utterance);
+                } catch(err) {
+                    status.innerText = "ERROR DE RED";
+                }
             };
 
-            // Mantiene el micro encendido si falla
             recognition.onerror = () => {
                 btn.classList.remove('listening');
                 status.innerText = "INTÉNTALO DE NUEVO";
