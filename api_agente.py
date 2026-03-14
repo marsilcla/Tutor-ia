@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-AIzaSyAsC-CZO2PtQiST6ejRzEVRpQUedHqiMKY
+API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # --- AUTODESCUBRIMIENTO DE MODELO ---
 MODELO_ACTIVO = None
