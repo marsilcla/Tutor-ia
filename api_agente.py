@@ -7,9 +7,32 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Leemos la Key de Render, o usamos la tuya por defecto
 API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyD1HvE82bj0yDanUgKAGy3pbr2hKZACv6A")
-MODELO_ACTIVO = "models/gemini-1.5-flash-latest"
+
+# --- AUTODESCUBRIMIENTO DE MODELO ---
+MODELO_ACTIVO = None
+
+async def obtener_modelo_real():
+    url_lista = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(url_lista)
+            modelos = r.json().get('models', [])
+            candidatos = [m['name'] for m in modelos if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            for target in ["1.5-flash", "1.5-pro", "gemini-pro"]:
+                for m in candidatos:
+                    if target in m:
+                        print(f"✅ MODELO DETECTADO Y ACTIVO: {m}")
+                        return m
+            return candidatos[0] if candidatos else None
+        except Exception as e:
+            print(f"❌ Error al listar modelos: {e}")
+            return None
+
+@app.on_event("startup")
+async def startup_event():
+    global MODELO_ACTIVO
+    MODELO_ACTIVO = await obtener_modelo_real()
 
 # --- MEMORIA ---
 FICHERO_MEMORIA = "memoria_tutor.json"
@@ -34,6 +57,9 @@ class Peticion(BaseModel):
 
 @app.post("/procesar_intento")
 async def procesar(peticion: Peticion):
+    if not MODELO_ACTIVO:
+        return {"feedback": "Error crítico: Google no devuelve ningún modelo válido."}
+
     uid = peticion.usuario_id
     url = f"https://generativelanguage.googleapis.com/v1beta/{MODELO_ACTIVO}:generateContent?key={API_KEY}"
     
@@ -46,10 +72,12 @@ async def procesar(peticion: Peticion):
     async with httpx.AsyncClient() as client:
         try:
             r = await client.post(url, json=prompt, timeout=15.0)
-            if r.status_code != 200:
-                return {"feedback": "Error de conexión con el cerebro de la IA."}
-            
             data = r.json()
+            
+            if r.status_code != 200:
+                error_real = data.get('error', {}).get('message', f'Código HTTP {r.status_code}')
+                return {"feedback": f"Error de Google: {error_real}"}
+            
             respuesta_texto = data['candidates'][0]['content']['parts'][0]['text'].replace("*", "").strip()
 
             if uid not in memoria_global: memoria_global[uid] = {"puntos": 0, "historial": []}
@@ -62,7 +90,7 @@ async def procesar(peticion: Peticion):
                 "sesiones": memoria_global[uid]["puntos"]
             }
         except Exception as e:
-            return {"feedback": "Error del servidor de voz.", "sesiones": 0}
+            return {"feedback": f"Fallo de servidor: {str(e)}", "sesiones": 0}
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
