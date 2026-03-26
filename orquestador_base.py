@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 MEMORIA_FILE = "memoria_estudiantes.json"
 
@@ -70,8 +70,12 @@ RULES:
 Student: "{msg.texto}"
 Alex:"""
 
-    r = model.generate_content(prompt)
-    text = r.text.strip()
+    try:
+        r = model.generate_content(prompt)
+        text = r.text.strip()
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"respuesta": f"[Error Gemini: {str(e)[:200]}]", "shutdown": False})
+
     shutdown = "SHUTDOWN" in text
     clean = text.replace("SHUTDOWN", "").strip()
 
