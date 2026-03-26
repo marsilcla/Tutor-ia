@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.env
+memoria_estudiantes.json
+memoria_tutor.json
+*.db
