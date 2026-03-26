@@ -489,11 +489,21 @@ rec.onresult=async e=>{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({usuario_id:'user',texto:text})
     });
+    if(!res.ok){
+      const errTxt=await res.text().catch(()=>'');
+      showExchange(text,'⚠️ Error '+res.status+': '+(errTxt.slice(0,120)||'Sin respuesta del servidor'));
+      setState('idle'); btn.className='';
+      if(autoListen) setTimeout(startListening,3000);
+      return;
+    }
     const data=await res.json();
-    showExchange(text,data.respuesta);
-    if(data.shutdown) speak(data.respuesta,shutdown);
-    else speak(data.respuesta,()=>{ if(autoListen) startListening(); });
-  }catch{
+    showExchange(text, data.respuesta||data.detail||'Sin respuesta');
+    const reply=data.respuesta||'';
+    if(!reply){ setState('idle'); btn.className=''; return; }
+    if(data.shutdown) speak(reply,shutdown);
+    else speak(reply,()=>{ if(autoListen) startListening(); });
+  }catch(err){
+    showExchange(text,'⚠️ Sin conexión: '+err.message);
     setState('idle'); btn.className='';
     if(autoListen) setTimeout(startListening,2500);
   }
